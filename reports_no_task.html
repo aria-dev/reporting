@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>No Task Employees</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f4f4f4;
+        }
+
+        button {
+            padding: 10px 16px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+
+        th {
+            background: #222;
+            color: white;
+        }
+
+        #status {
+            margin-top: 15px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>No Task Employees - Today</h2>
+
+    <label>
+        <input type="checkbox" id="includeCEO">
+        Include CEO (Ankit Anil Bhargava)
+    </label>
+
+    <br>
+
+    <button onclick="run()">Fetch No Task Data</button>
+    <button onclick="exportCSV()" id="exportBtn" style="display:none;">
+        Export CSV
+    </button>
+
+    <p id="status"></p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Employee ID</th>
+                <th>Employee Name</th>
+                <th>Manager</th>
+            </tr>
+        </thead>
+        <tbody id="results"></tbody>
+    </table>
+
+<script>
+let latestData = [];
+const BASE_URL = "https://api.employee.foxberry.link/v1/emp";
+
+async function post(url, body) {
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+    });
+
+    return response.json();
+}
+
+async function getManagers() {
+    const response = await post(`${BASE_URL}/getallemp1`, {
+        empId: "",
+        name: "",
+        label: "",
+        resourceType: "",
+        experience: "",
+        isApproved: "",
+        documentsPerPage: 500,
+        page: 1
+    });
+
+    const employees = response.data || [];
+
+    const managers = employees.filter(emp =>
+        emp.resourceType === "manager" ||
+        emp.resourceType === "teamlead" ||
+        emp.resourceType === "humanResource"
+    );
+
+    return managers.map(emp => ({
+        empId: emp.empId,
+        name: `${emp.firstName} ${emp.lastName}`.trim(),
+        designation: emp.designation
+    }));
+}
+
+async function getNoTaskEmployees(managerName) {
+    const response = await post(`${BASE_URL}/noAssignedTaskEmp1`, {
+        taskDate: "",
+        lead: managerName,
+        empId: "",
+        name: "",
+        department: "",
+        designation: "",
+        documentsPerPage: 100,
+        page: 1
+    });
+
+    return response.data || [];
+}
+
+function renderTable(data) {
+    const tbody = document.getElementById("results");
+
+    tbody.innerHTML = data.map(row => `
+        <tr>
+            <td>${row.empId}</td>
+            <td>${row.name}</td>
+            <td>${row.manager}</td>
+        </tr>
+    `).join("");
+}
+
+function exportCSV() {
+    if (!latestData.length) {
+        alert("No data to export.");
+        return;
+    }
+
+    const headers = ["Employee ID", "Employee Name", "Manager"];
+
+    const rows = latestData.map(emp => [
+        emp.empId,
+        emp.name,
+        emp.manager
+    ]);
+
+    const csvContent = [
+        headers.join(","),
+        ...rows.map(row =>
+            row.map(value => `"${value}"`).join(",")
+        )
+    ].join("\n");
+
+    const blob = new Blob([csvContent], {
+        type: "text/csv;charset=utf-8;"
+    });
+
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute("href", url);
+    link.setAttribute(
+        "download",
+        `no-task-employees-${new Date().toISOString().split("T")[0]}.csv`
+    );
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+async function run() {
+    const status = document.getElementById("status");
+    const tbody = document.getElementById("results");
+
+    tbody.innerHTML = "";
+    status.innerText = "Fetching managers...";
+
+    try {
+        let managers = await getManagers();
+
+        const includeCEO = document.getElementById("includeCEO").checked;
+
+        if (includeCEO) {
+            const ceoExists = managers.some(
+                m => m.name === "Ankit Anil Bhargava"
+            );
+
+            if (!ceoExists) {
+                managers.push({
+                    name: "Ankit Anil Bhargava"
+                });
+            }
+        }
+
+        let mergedList = [];
+
+        for (const manager of managers) {
+            status.innerText = `Checking ${manager.name}...`;
+
+            try {
+                const noTaskEmployees = await getNoTaskEmployees(manager.name);
+
+                noTaskEmployees.forEach(emp => {
+                    mergedList.push({
+                        empId: emp.empId,
+                        name: `${emp.firstName} ${emp.lastName}`.trim(),
+                        manager: manager.name
+                    });
+                });
+
+            } catch (error) {
+                console.error("Error fetching for:", manager.name, error);
+            }
+        }
+
+        renderTable(mergedList);
+
+        latestData = mergedList;
+        document.getElementById("exportBtn").style.display = "inline-block";
+
+        status.innerText = `Done. Found ${mergedList.length} employees with no tasks.`;
+
+    } catch (error) {
+        console.error(error);
+        status.innerText = "Something went wrong.";
+    }
+}
+</script>
+
+</body>
+</html>
