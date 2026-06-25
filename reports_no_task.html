@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>No Task Employees</title>
     <style>
         body {
@@ -15,6 +15,7 @@
             padding: 10px 16px;
             cursor: pointer;
             margin-top: 10px;
+            margin-right: 8px;
         }
 
         table {
@@ -27,6 +28,8 @@
         th, td {
             padding: 10px;
             border: 1px solid #ddd;
+            text-align: left;
+            vertical-align: top;
         }
 
         th {
@@ -38,6 +41,11 @@
             margin-top: 15px;
             font-weight: bold;
         }
+
+        .manager-list {
+            line-height: 1.5;
+            white-space: normal;
+        }
     </style>
 </head>
 <body>
@@ -45,11 +53,11 @@
     <h2>No Task Employees - Today</h2>
 
     <label>
-        <input type="checkbox" id="includeCEO">
+        <input type="checkbox" id="includeCEO" />
         Include CEO (Ankit Anil Bhargava)
     </label>
 
-    <br>
+    <br />
 
     <button onclick="run()">Fetch No Task Data</button>
     <button onclick="exportCSV()" id="exportBtn" style="display:none;">
@@ -63,7 +71,7 @@
             <tr>
                 <th>Employee ID</th>
                 <th>Employee Name</th>
-                <th>Manager</th>
+                <th>Managers</th>
             </tr>
         </thead>
         <tbody id="results"></tbody>
@@ -107,7 +115,7 @@ async function getManagers() {
 
     return managers.map(emp => ({
         empId: emp.empId,
-        name: `${emp.firstName} ${emp.lastName}`.trim(),
+        name: `${emp.firstName || ""} ${emp.lastName || ""}`.trim(),
         designation: emp.designation
     }));
 }
@@ -132,9 +140,9 @@ function renderTable(data) {
 
     tbody.innerHTML = data.map(row => `
         <tr>
-            <td>${row.empId}</td>
-            <td>${row.name}</td>
-            <td>${row.manager}</td>
+            <td>${escapeHtml(row.empId)}</td>
+            <td>${escapeHtml(row.name)}</td>
+            <td class="manager-list">${row.managers.map(escapeHtml).join("<br>")}</td>
         </tr>
     `).join("");
 }
@@ -145,18 +153,18 @@ function exportCSV() {
         return;
     }
 
-    const headers = ["Employee ID", "Employee Name", "Manager"];
+    const headers = ["Employee ID", "Employee Name", "Managers"];
 
     const rows = latestData.map(emp => [
         emp.empId,
         emp.name,
-        emp.manager
+        emp.managers.join(" | ")
     ]);
 
     const csvContent = [
         headers.join(","),
         ...rows.map(row =>
-            row.map(value => `"${value}"`).join(",")
+            row.map(value => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")
         )
     ].join("\n");
 
@@ -178,15 +186,30 @@ function exportCSV() {
     document.body.removeChild(link);
 }
 
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 async function run() {
     const status = document.getElementById("status");
     const tbody = document.getElementById("results");
+    const exportBtn = document.getElementById("exportBtn");
 
     tbody.innerHTML = "";
+    latestData = [];
+    exportBtn.style.display = "none";
     status.innerText = "Fetching managers...";
 
     try {
         let managers = await getManagers();
+
+        // Skip this manager entirely
+        managers = managers.filter(manager => manager.name !== "Shanu Manager");
 
         const includeCEO = document.getElementById("includeCEO").checked;
 
@@ -202,7 +225,9 @@ async function run() {
             }
         }
 
-        let mergedList = [];
+        // key => employee
+        // value => { empId, name, managers: Set }
+        const employeeMap = new Map();
 
         for (const manager of managers) {
             status.innerText = `Checking ${manager.name}...`;
@@ -211,11 +236,21 @@ async function run() {
                 const noTaskEmployees = await getNoTaskEmployees(manager.name);
 
                 noTaskEmployees.forEach(emp => {
-                    mergedList.push({
-                        empId: emp.empId,
-                        name: `${emp.firstName} ${emp.lastName}`.trim(),
-                        manager: manager.name
-                    });
+                    const empId = String(emp.empId || "").trim();
+                    const fullName = `${emp.firstName || ""} ${emp.lastName || ""}`.trim();
+
+                    // Prefer empId for uniqueness, fallback to name if missing
+                    const uniqueKey = empId || fullName.toLowerCase();
+
+                    if (!employeeMap.has(uniqueKey)) {
+                        employeeMap.set(uniqueKey, {
+                            empId,
+                            name: fullName,
+                            managers: new Set()
+                        });
+                    }
+
+                    employeeMap.get(uniqueKey).managers.add(manager.name);
                 });
 
             } catch (error) {
@@ -223,12 +258,21 @@ async function run() {
             }
         }
 
+        const mergedList = Array.from(employeeMap.values()).map(emp => ({
+            empId: emp.empId,
+            name: emp.name,
+            managers: Array.from(emp.managers).sort((a, b) => a.localeCompare(b))
+        }));
+
+        // Sort employees by name
+        mergedList.sort((a, b) => a.name.localeCompare(b.name));
+
         renderTable(mergedList);
 
         latestData = mergedList;
-        document.getElementById("exportBtn").style.display = "inline-block";
+        exportBtn.style.display = mergedList.length ? "inline-block" : "none";
 
-        status.innerText = `Done. Found ${mergedList.length} employees with no tasks.`;
+        status.innerText = `Done. Found ${mergedList.length} unique employees with no tasks.`;
 
     } catch (error) {
         console.error(error);
